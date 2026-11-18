@@ -1,0 +1,52 @@
+# On a pushed tag: builds the demo disks and publishes them as a
+# GitHub release named after the tag.
+name: release
+
+on:
+  push:
+    tags: ['*']
+
+permissions:
+  contents: write
+
+env:
+  SJASMPLUS_VERSION: v1.24.0
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache sjasmplus
+        id: sjasmplus
+        uses: actions/cache@v4
+        with:
+          path: ~/sjasmplus-bin
+          key: sjasmplus-${{ env.SJASMPLUS_VERSION }}-ubuntu-24.04
+
+      - name: Build sjasmplus
+        if: steps.sjasmplus.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$SJASMPLUS_VERSION" \
+            https://github.com/z00m128/sjasmplus.git "$RUNNER_TEMP/sjasmplus"
+          cd "$RUNNER_TEMP/sjasmplus"
+          git submodule update --init --depth 1
+          make -j"$(nproc)"
+          install -D -m 755 sjasmplus ~/sjasmplus-bin/sjasmplus
+
+      - name: Build the disks
+        run: |
+          export PATH="$HOME/sjasmplus-bin:$PATH"
+          sh build.sh
+          mkdir release
+          cp build/demo.imd "release/maximum-80-$GITHUB_REF_NAME-8in.imd"
+          cp build/demo_525.imd "release/maximum-80-$GITHUB_REF_NAME-525.imd"
+          (cd release && sha256sum *.imd > SHA256SUMS)
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release/* \
+            --verify-tag --title "Maximum-80 $GITHUB_REF_NAME" --generate-notes
